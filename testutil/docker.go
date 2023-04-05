@@ -11,13 +11,13 @@ import (
 
 // Container tracks information about the docker container started for tests.
 type Container struct {
-	ID   string
-	Host string // IP:Port
-	Port int
+	ID    string
+	Host  string
+	Ports map[string]int
 }
 
 // StartContainer starts the specified container for running tests.
-func StartContainer(image, port string, args ...string) (*Container, error) {
+func StartContainer(image string, ports []string, args ...string) (*Container, error) {
 	arg := []string{"run", "-P", "-d"}
 	arg = append(arg, args...)
 	arg = append(arg, image)
@@ -30,24 +30,30 @@ func StartContainer(image, port string, args ...string) (*Container, error) {
 	}
 
 	id := out.String()[:12]
-	hostIP, hostPort, err := extractIPPort(id, port)
-	if err != nil {
-		// nolint
-		StopContainer(id)
-		return nil, fmt.Errorf("could not extract ip/port: %w", err)
-	}
-
-	portInt, err := strconv.Atoi(hostPort)
-	if err != nil {
-		// nolint
-		StopContainer(id)
-		return nil, fmt.Errorf("could not extract ip/port: %w", err)
-	}
 
 	c := Container{
-		ID:   id,
-		Host: hostIP,
-		Port: portInt,
+		ID:    id,
+		Host:  "0.0.0.0",
+		Ports: make(map[string]int, len(ports)),
+	}
+
+	for _, port := range ports {
+		_, hostPort, err := ExtractIPPort(id, port)
+		if err != nil {
+			// nolint
+			StopContainer(id)
+			return nil, fmt.Errorf("could not extract ip/port: %w", err)
+		}
+
+		portInt, err := strconv.Atoi(hostPort)
+		if err != nil {
+			// nolint
+			StopContainer(id)
+			return nil, fmt.Errorf("could not extract ip/port: %w", err)
+		}
+
+		c.Ports[port] = portInt
+
 	}
 
 	return &c, nil
@@ -75,7 +81,8 @@ func DumpContainerLogs(id string) []byte {
 	return out
 }
 
-func extractIPPort(id, port string) (hostIP, hostPort string, err error) {
+// ExtractIPPort extracts container real port binded to docker application port.
+func ExtractIPPort(id, port string) (hostIP, hostPort string, err error) {
 	tmpl := fmt.Sprintf("[{{range $k,$v := (index .NetworkSettings.Ports \"%s/tcp\")}}{{json $v}}{{end}}]", port)
 
 	// nolint
